@@ -1,0 +1,25 @@
+{
+  "version": 3,
+  "configurePresets": [
+    {
+      "name": "vs2022-x64",
+      "displayName": "Visual Studio 2022 x64",
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/vs2022-x64",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Release",
+        "CMAKE_GENERATOR_INSTANCE": "D:/microsoft/Microsoft Visual Studio/2022/Community"
+      },
+      "environment": {
+        "VULKAN_SDK": "D:/VulkanSDK/1.4.363.0"
+      }
+    }
+  ],
+  "buildPresets": [
+    { "name": "debug", "configurePreset": "vs2022-x64", "configuration": "Debug", "jobs": 4 }
+  ],
+  "testPresets": [
+    { "name": "debug", "configurePreset": "vs2022-x64", "configuration": "Debug", "output": { "outputOnFailure": true } }
+  ]
+}

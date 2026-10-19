@@ -6,6 +6,11 @@
 !/LICENSE
 !/README.md
 !/QUESTIONS.md
+!/CMakeLists.txt
+!/CMakePresets.json
+!/build-vs2022.ps1
+!/open-vs2022.cmd
+!/WINDOWS-VS2022.md
 
 # Tutorial sources and documentation.
 !/examples/

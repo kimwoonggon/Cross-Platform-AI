@@ -19,7 +19,10 @@ add_custom_command(
 )
 add_custom_target(staging_buffers_shader DEPENDS "${SHADER_BINARY}")
 
-add_executable(staging_buffers_example main.cpp)
+add_executable(staging_buffers_example main.cpp README.md add.comp)
+set_source_files_properties(README.md add.comp PROPERTIES HEADER_FILE_ONLY TRUE)
+source_group("" FILES README.md)
+source_group("" FILES add.comp)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../99-completed/12-staging-buffers.cpp")
     add_executable(staging_buffers_completed EXCLUDE_FROM_ALL ../99-completed/12-staging-buffers.cpp)
     set_target_properties(staging_buffers_completed PROPERTIES

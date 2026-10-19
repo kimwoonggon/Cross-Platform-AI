@@ -9,6 +9,8 @@
 #include <utility>
 #include <vector>
 // TODO: <fstream> 헤더를 추가합니다.
+#include <fstream>
+
 
 class ComputeApplication
 {
@@ -28,6 +30,7 @@ private:
     static_assert(sizeof(float) == 4);
     static constexpr std::uint32_t elementCount = 8;
     static constexpr vk::DeviceSize bufferSize = sizeof(float) * elementCount;
+    
 
     struct BufferResource
     {
@@ -49,6 +52,7 @@ private:
     vk::raii::DescriptorPool descriptorPool = nullptr;
     std::vector<vk::raii::DescriptorSet> descriptorSets;
     // TODO: shaderModule 멤버를 추가합니다.
+    vk::raii::ShaderModule shaderModule = nullptr;
 
     bool initVulkan()
     {
@@ -59,7 +63,8 @@ private:
             && createStorageBuffers()
             && createDescriptorSetLayout()
             && createDescriptorPool()
-            && createDescriptorSets(); // TODO: createShaderModule() 호출을 이어 붙입니다.
+            && createDescriptorSets() // TODO: createShaderModule() 호출을 이어 붙입니다.
+            && createShaderModule();
     }
 
     bool checkValidationLayerSupport()
@@ -374,6 +379,42 @@ private:
         return true;
     }
     // TODO: createShaderModule() 함수를 추가합니다.
+    bool createShaderModule()
+    {
+        // 1. 컴파일된 SPIR-V 바이너리 열기
+        std::ifstream file(
+            ADD_SHADER_PATH,
+            std::ios::binary | std::ios::ate
+        );
+
+        if (!file)
+            return false;
+
+        // 2. 파일 크기 확인 (단위: 바이트)
+        const auto bytes = file.tellg();
+
+        // 3. 32비트 워드 수만큼 공간 할당
+        std::vector<uint32_t> words(
+            static_cast<size_t>(bytes) / sizeof(uint32_t)
+        );
+
+        // 4. 파일 처음부터 바이너리 읽기
+        file.seekg(0);
+        file.read(
+            reinterpret_cast<char*>(words.data()),
+            bytes
+        );
+
+        // 5. ShaderModule 생성 정보 구성
+        vk::ShaderModuleCreateInfo info{};
+        info.codeSize = static_cast<size_t>(bytes);
+        info.pCode = words.data();
+
+        // 6. Vulkan 객체 생성
+        shaderModule = vk::raii::ShaderModule(device, info);
+
+        return true;
+    }
 };
 
 int main()

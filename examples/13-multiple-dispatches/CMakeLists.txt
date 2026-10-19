@@ -19,7 +19,10 @@ add_custom_command(
 )
 add_custom_target(multiple_dispatches_shader DEPENDS "${SHADER_BINARY}")
 
-add_executable(multiple_dispatches_example main.cpp)
+add_executable(multiple_dispatches_example main.cpp README.md add.comp)
+set_source_files_properties(README.md add.comp PROPERTIES HEADER_FILE_ONLY TRUE)
+source_group("" FILES README.md)
+source_group("" FILES add.comp)
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../99-completed/13-multiple-dispatches.cpp")
     add_executable(multiple_dispatches_completed EXCLUDE_FROM_ALL ../99-completed/13-multiple-dispatches.cpp)
     set_target_properties(multiple_dispatches_completed PROPERTIES
