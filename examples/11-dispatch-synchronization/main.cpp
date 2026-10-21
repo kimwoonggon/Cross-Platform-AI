@@ -20,7 +20,26 @@ public:
         {
             return false;
         }
-        return recordCommandBuffer(); // TODO: run()을 입력 갱신·제출·대기·검증 반복으로 바꿉니다.
+        if (!recordCommandBuffer())
+            return false;
+
+        for (uint32_t round = 0; round < 2; ++round)
+        {
+            if (round != 0)
+                device.resetFences(*fence);
+
+            if (!writeInputs(round))
+                return false;
+
+            if (!submitAndWait())
+                return false;
+
+            if (!verifyOutput(round))
+                return false;
+        }
+
+
+        return true; // TODO: run()을 입력 갱신·제출·대기·검증 반복으로 바꿉니다.
     }
 
 private:
@@ -56,6 +75,7 @@ private:
     vk::raii::CommandPool commandPool = nullptr;
     std::vector<vk::raii::CommandBuffer> commandBuffers;
     // TODO: fence 멤버를 추가합니다.
+    vk::raii::Fence fence = nullptr;
 
     bool initVulkan()
     {
@@ -71,7 +91,9 @@ private:
             && createPipelineLayout()
             && createComputePipeline()
             && createCommandPool()
-            && allocateCommandBuffer(); // TODO: createFence() 호출을 이어 붙입니다.
+            && allocateCommandBuffer()
+            && createFence();
+             // TODO: createFence() 호출을 이어 붙입니다.
     }
 
     bool checkValidationLayerSupport()
@@ -486,11 +508,123 @@ private:
                                         0, count); // C API: vkCmdPushConstants
         cmd.dispatch(groupCount, 1, 1); // C API: vkCmdDispatch
         // TODO: compute write → host read 배리어를 기록합니다.
+        vk::BufferMemoryBarrier barrier{};
+
+        barrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
+        barrier.dstAccessMask = vk::AccessFlagBits::eHostRead;
+
+        barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+        barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+
+        barrier.buffer = *output.buffer;
+        barrier.offset = 0;
+        barrier.size = bufferSize;
+
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eComputeShader,
+            vk::PipelineStageFlagBits::eHost,
+            {},
+            {},
+            barrier,
+            {}
+        );
+
         cmd.end(); // C API: vkEndCommandBuffer
         std::cout << "Command buffer recorded: " << groupCount << " workgroups.\n";
         return true;
     }
     // TODO: createFence(), writeInputs(), submitAndWait(), verifyOutput()을 추가합니다.
+    bool createFence()
+    {
+        vk::FenceCreateInfo info{};
+        fence = vk::raii::Fence(device, info);
+        return true;
+    }
+
+    bool writeBuffer(
+        BufferResource& resource,
+        const std::array<float, elementCount>& values)
+    {
+        void* ptr = resource.memory.mapMemory(0, bufferSize);
+
+        std::memcpy(ptr, values.data(), bufferSize);
+
+        resource.memory.unmapMemory();
+        return true;
+    }
+
+    bool writeInputs(uint32_t round)
+    {
+        std::array<float, elementCount> a{};
+        std::array<float, elementCount> b{};
+        std::array<float, elementCount> initial{};
+
+        initial.fill(
+            std::numeric_limits<float>::quiet_NaN()
+        );
+
+        for (uint32_t i = 0; i < elementCount; ++i)
+        {
+            a[i] = float(i + round);
+            b[i] = 10.0f + float(i + round);
+        }
+
+        return writeBuffer(inputA, a)
+            && writeBuffer(inputB, b)
+            && writeBuffer(output, initial);
+    }
+
+    bool submitAndWait()
+    {
+        vk::CommandBuffer handle = *commandBuffers[0];
+
+        vk::SubmitInfo info{};
+        info.commandBufferCount = 1;
+        info.pCommandBuffers = &handle;
+
+        // GPU Queue에 실제 제출
+        computeQueue.submit(info, *fence);
+
+        // GPU 작업이 완료될 때까지 CPU 대기
+        auto result = device.waitForFences(
+            *fence,
+            VK_TRUE,
+            UINT64_MAX
+        );
+
+        return result == vk::Result::eSuccess;
+    }
+
+    bool verifyOutput(uint32_t round)
+    {
+        std::array<float, elementCount> results{};
+
+        void* ptr = output.memory.mapMemory(0, bufferSize);
+
+        std::memcpy(
+            results.data(),
+            ptr,
+            bufferSize
+        );
+
+        output.memory.unmapMemory();
+
+        for (uint32_t i = 0; i < elementCount; ++i)
+        {
+            float a = float(i + round);
+            float b = 10.0f + float(i + round);
+
+            float expected = a + b;
+            float error = std::abs(results[i] - expected);
+            float tolerance = 1e-5f * (1.0f + std::abs(expected));
+
+            if (!std::isfinite(results[i]) || error > tolerance)
+                return false;
+        }
+        return true;
+    }
+
+
 };
 
 int main()

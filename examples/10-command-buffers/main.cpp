@@ -29,6 +29,7 @@ private:
     static constexpr std::uint32_t elementCount = 8;
     // TODO: 셰이더와 같은 workgroupSize = 64를 추가합니다.
     static constexpr vk::DeviceSize bufferSize = sizeof(float) * elementCount;
+    static constexpr std::uint32_t workgroupSize = 64;
 
     struct BufferResource
     {
@@ -53,6 +54,9 @@ private:
     vk::raii::PipelineLayout pipelineLayout = nullptr;
     vk::raii::Pipeline computePipeline = nullptr;
     // TODO: commandPool, commandBuffers 멤버를 추가합니다.
+    vk::raii::CommandPool commandPool = nullptr;
+    vk::raii::CommandBuffers commandBuffers = nullptr;
+    
 
     bool initVulkan()
     {
@@ -441,6 +445,69 @@ private:
         return true;
     }
     // TODO: createCommandPool(), allocateCommandBuffer(), recordCommandBuffer()를 추가합니다.
+    bool createCommandPool()
+    {
+        vk::CommandPoolCreateInfo info{};
+        info.queueFamilyIndex = computeQueueFamilyIndex;
+        commandPool = vk::raii::CommandPool(device, info); // C API: vkCreateCommandPool
+        return true;
+    }
+
+    bool allocateCommandBuffer()
+    {
+        vk::CommandBufferAllocateInfo info{};
+
+        info.commandPool = *commandPool;
+        info.level = vk::CommandBufferLevel::ePrimary;
+        info.commandBufferCount = 1;
+
+        commandBuffers = device.allocateCommandBuffers(info);
+        return true;
+    }
+
+    bool recordCommandBuffer()
+    {
+        // X 방향으로 필요한 Workgroup 개수
+        uint32_t groups =
+            (elementCount + workgroupSize - 1) / workgroupSize;
+
+        auto& cmd = commandBuffers[0];
+
+        // 명령 기록 시작
+        cmd.begin(vk::CommandBufferBeginInfo{});
+
+        // Compute Pipeline 바인딩
+        cmd.bindPipeline(
+            vk::PipelineBindPoint::eCompute,
+            *computePipeline
+        );
+
+        // DescriptorSet 0번 자리에 실제 셋 연결
+        cmd.bindDescriptorSets(
+            vk::PipelineBindPoint::eCompute,
+            *pipelineLayout,
+            0,
+            *descriptorSets[0],
+            {}
+        );
+
+        // Push Constant: 원소 개수
+        uint32_t count = elementCount;
+        cmd.pushConstants<uint32_t>(
+            *pipelineLayout,
+            vk::ShaderStageFlagBits::eCompute,
+            0,
+            count
+        );
+
+        // Workgroup 실행 명령 기록
+        cmd.dispatch(groups, 1, 1);
+
+        // 명령 기록 끝
+        cmd.end();
+
+        return true;
+    }
 };
 
 int main()

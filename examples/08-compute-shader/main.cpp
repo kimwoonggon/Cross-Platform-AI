@@ -53,6 +53,8 @@ private:
     std::vector<vk::raii::DescriptorSet> descriptorSets;
     // TODO: shaderModule 멤버를 추가합니다.
     vk::raii::ShaderModule shaderModule = nullptr;
+    vk::raii::PipelineLayout pipelineLayout = nullptr;
+    vk::raii::Pipeline computePipeline = nullptr;
 
     bool initVulkan()
     {
@@ -64,7 +66,8 @@ private:
             && createDescriptorSetLayout()
             && createDescriptorPool()
             && createDescriptorSets() // TODO: createShaderModule() 호출을 이어 붙입니다.
-            && createShaderModule();
+            && createShaderModule()
+            && createComputepipeline();
     }
 
     bool checkValidationLayerSupport()
@@ -393,6 +396,10 @@ private:
         // 2. 파일 크기 확인 (단위: 바이트)
         const auto bytes = file.tellg();
 
+        if (bytes <= 0 || bytes % sizeof(uint32_t) != 0)
+            return false;
+
+
         // 3. 32비트 워드 수만큼 공간 할당
         std::vector<uint32_t> words(
             static_cast<size_t>(bytes) / sizeof(uint32_t)
@@ -415,6 +422,39 @@ private:
 
         return true;
     }
+
+    bool createComputepipeline()
+    {
+        vk::PushConstantRange pushConstantRange{};
+        pushConstantRange.stageFlags = vk::ShaderStageFlagBits::eCompute;
+        pushConstantRange.offset = 0;
+        pushConstantRange.size = sizeof(std::uint32_t);
+
+        const vk::DescriptorSetLayout setLayout = *descriptorSetLayout;
+        vk::PipelineLayoutCreateInfo layoutInfo{};
+        layoutInfo.setLayoutCount = 1;
+        layoutInfo.pSetLayouts = &setLayout;
+        layoutInfo.pushConstantRangeCount = 1;
+        layoutInfo.pPushConstantRanges = &pushConstantRange;
+        pipelineLayout = vk::raii::PipelineLayout(device, layoutInfo);
+
+        vk::PipelineShaderStageCreateInfo stage{};
+        stage.stage = vk::ShaderStageFlagBits::eCompute;
+        stage.module = *shaderModule;
+        stage.pName = "main";
+
+        vk::ComputePipelineCreateInfo info{};
+        info.stage = stage;
+        info.layout = *pipelineLayout;
+
+        computePipeline = vk::raii::Pipeline(
+            device,
+            nullptr,
+            info
+        );
+
+        return true;
+    }
 };
 
 int main()
@@ -427,6 +467,6 @@ int main()
         }
     }
 
-    std::cout << "Resources destroyed.\n";
+    std::cout << "Resources destroyed.";
     return 0;
 }

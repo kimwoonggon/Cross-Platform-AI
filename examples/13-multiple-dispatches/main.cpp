@@ -60,6 +60,8 @@ private:
     BufferResource inputB;
     BufferResource output;
     // TODO: intermediate 멤버와 device-local storage buffer 생성을 추가합니다.
+    BufferResource intermediate;
+    BufferResource deviceLocalStorage;
     BufferResource uploadA;
     BufferResource uploadB;
     BufferResource readback;
@@ -257,9 +259,26 @@ private:
         return createBuffer(bufferSize, inputUsage, deviceMemory, inputA)
             && createBuffer(bufferSize, inputUsage, deviceMemory, inputB)
             && createBuffer(bufferSize, outputUsage, deviceMemory, output)
-            && createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, hostMemory, uploadA)
-            && createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferSrc, hostMemory, uploadB)
-            && createBuffer(bufferSize, vk::BufferUsageFlagBits::eTransferDst, hostMemory, readback);
+
+            // ★ 누락된 intermediate Buffer 생성
+            && createBuffer(
+                bufferSize,
+                vk::BufferUsageFlagBits::eStorageBuffer,
+                deviceMemory,
+                intermediate
+            )
+
+            && createBuffer(bufferSize,
+                vk::BufferUsageFlagBits::eTransferSrc,
+                hostMemory, uploadA)
+
+            && createBuffer(bufferSize,
+                vk::BufferUsageFlagBits::eTransferSrc,
+                hostMemory, uploadB)
+
+            && createBuffer(bufferSize,
+                vk::BufferUsageFlagBits::eTransferDst,
+                hostMemory, readback);
     }
 
     bool createBuffer(vk::DeviceSize size, vk::BufferUsageFlags usage,
@@ -336,45 +355,72 @@ private:
     {
         vk::DescriptorPoolSize poolSize{};
         poolSize.type = vk::DescriptorType::eStorageBuffer;
-        poolSize.descriptorCount = 3;
+        poolSize.descriptorCount = 6;
         vk::DescriptorPoolCreateInfo poolInfo{};
         poolInfo.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet;
-        poolInfo.maxSets = 1;
+        poolInfo.maxSets = 2;
         poolInfo.poolSizeCount = 1;
         poolInfo.pPoolSizes = &poolSize;
         descriptorPool = vk::raii::DescriptorPool(device, poolInfo); // C API: vkCreateDescriptorPool
         return true;
     }
 
-    // TODO: {A, B, intermediate}, {intermediate, B, output} 셋을 각각 만듭니다.
+    // TODO: {A, B, intermediate}, 
+    // {intermediate, B, output} 셋을 각각 만듭니다.
     bool createDescriptorSets()
     {
-        const vk::DescriptorSetLayout layout = *descriptorSetLayout;
+        // 1. 동일한 Layout으로 DescriptorSet 2개 할당
+        std::array<vk::DescriptorSetLayout, 2> layouts = {
+            *descriptorSetLayout,
+            *descriptorSetLayout
+        };
         vk::DescriptorSetAllocateInfo allocInfo{};
         allocInfo.descriptorPool = *descriptorPool;
-        allocInfo.descriptorSetCount = 1;
-        allocInfo.pSetLayouts = &layout;
+        allocInfo.descriptorSetCount = 2;
+        allocInfo.pSetLayouts = layouts.data();
+
         descriptorSets = device.allocateDescriptorSets(allocInfo); // C API: vkAllocateDescriptorSets
 
-        std::array<vk::DescriptorBufferInfo, 3> bufferInfos{};
-        bufferInfos[0].buffer = *inputA.buffer;
-        bufferInfos[1].buffer = *inputB.buffer;
-        bufferInfos[2].buffer = *output.buffer;
-        for (auto& bufferInfo : bufferInfos)
+        // 2. 각 DescriptorSet에서 사용할 Buffer 조합
+        std::array<std::array<vk::Buffer, 3>, 2> buffers = { {
+            {
+                *inputA.buffer,
+                *inputB.buffer,
+                *intermediate.buffer
+            },
+            {
+                *intermediate.buffer,
+                *inputB.buffer,
+                *output.buffer
+            }
+        } };
+
+        // 3. 각 DescriptorSet에 실제 Buffer 연결
+        for (std::uint32_t s = 0; s < 2; ++s)
         {
-            bufferInfo.offset = 0;
-            bufferInfo.range = bufferSize;
+            std::array<vk::DescriptorBufferInfo, 3> bufferInfos{};
+
+            for (std::uint32_t i = 0; i < 3; ++i)
+            {
+                bufferInfos[i].buffer = buffers[s][i];
+                bufferInfos[i].offset = 0;
+                bufferInfos[i].range = bufferSize;
+            }
+
+            std::array<vk::WriteDescriptorSet, 3> writes{};
+
+            for (std::uint32_t i = 0; i < 3; ++i)
+            {
+                writes[i].dstSet = *descriptorSets[s];
+                writes[i].dstBinding = i;
+                writes[i].descriptorType =
+                    vk::DescriptorType::eStorageBuffer;
+                writes[i].descriptorCount = 1;
+                writes[i].pBufferInfo = &bufferInfos[i];
+            }
+
+            device.updateDescriptorSets(writes, {});
         }
-        std::array<vk::WriteDescriptorSet, 3> writes{};
-        for (std::uint32_t i = 0; i < writes.size(); ++i)
-        {
-            writes[i].dstSet = *descriptorSets[0];
-            writes[i].dstBinding = i;
-            writes[i].descriptorType = vk::DescriptorType::eStorageBuffer;
-            writes[i].descriptorCount = 1;
-            writes[i].pBufferInfo = &bufferInfos[i];
-        }
-        device.updateDescriptorSets(writes, {}); // C API: vkUpdateDescriptorSets
         return true;
     }
     bool createShaderModule()
@@ -489,14 +535,61 @@ private:
                             vk::PipelineStageFlagBits::eComputeShader, {}, {}, uploadBarriers, {}); // C API: vkCmdPipelineBarrier
 
         cmd.bindPipeline(vk::PipelineBindPoint::eCompute, *computePipeline); // C API: vkCmdBindPipeline
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, *pipelineLayout,
-                               0, *descriptorSets[0], {}); // C API: vkCmdBindDescriptorSets
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute,
+            *pipelineLayout,
+                               0,
+            *descriptorSets[0],
+            {}); // C API: vkCmdBindDescriptorSets
         const std::uint32_t count = elementCount;
         cmd.pushConstants<std::uint32_t>(*pipelineLayout, vk::ShaderStageFlagBits::eCompute,
                                         0, count); // C API: vkCmdPushConstants
         cmd.dispatch(groupCount, 1, 1); // C API: vkCmdDispatch
 
         // TODO: intermediate 배리어, 두 번째 셋 바인딩, 두 번째 dispatch를 추가합니다.
+
+
+    // ① 첫 번째 Dispatch가 작성한 intermediate의 메모리 의존성
+        vk::BufferMemoryBarrier intermediateBarrier{};
+
+        intermediateBarrier.srcAccessMask =
+            vk::AccessFlagBits::eShaderWrite;
+
+        intermediateBarrier.dstAccessMask =
+            vk::AccessFlagBits::eShaderRead;
+
+        intermediateBarrier.srcQueueFamilyIndex =
+            VK_QUEUE_FAMILY_IGNORED;
+
+        intermediateBarrier.dstQueueFamilyIndex =
+            VK_QUEUE_FAMILY_IGNORED;
+
+        intermediateBarrier.buffer = *intermediate.buffer;
+        intermediateBarrier.offset = 0;
+        intermediateBarrier.size = bufferSize;
+
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eComputeShader,
+            vk::PipelineStageFlagBits::eComputeShader,
+            {},
+            {},
+            intermediateBarrier,
+            {}
+        );
+
+        // ② 두 번째 DescriptorSet 바인딩
+        cmd.bindDescriptorSets(
+            vk::PipelineBindPoint::eCompute,
+            *pipelineLayout,
+            0,
+            *descriptorSets[1],
+            {}
+        );
+
+        // ③ 두 번째 Dispatch
+        cmd.dispatch(groupCount, 1, 1);
+
+
+
         vk::BufferMemoryBarrier downloadBarrier{};
         downloadBarrier.srcAccessMask = vk::AccessFlagBits::eShaderWrite;
         downloadBarrier.dstAccessMask = vk::AccessFlagBits::eTransferRead;
@@ -523,6 +616,7 @@ private:
         std::cout << "Command buffer recorded: " << groupCount << " workgroups.\n";
         return true;
     }
+
     bool createFence()
     {
         fence = vk::raii::Fence(device, vk::FenceCreateInfo{}); // C API: vkCreateFence
@@ -572,7 +666,7 @@ private:
         {
             const float a = static_cast<float>(i + round);
             const float b = 10.0f + static_cast<float>(i + round);
-            const float expected = a + b; // TODO: 두 연산의 CPU 기준값 (a + b) + b로 바꿉니다.
+            const float expected = (a + b) + b; // TODO: 두 연산의 CPU 기준값 (a + b) + b로 바꿉니다.
             const float tolerance = 1e-5f * (1.0f + std::abs(expected));
             if (!std::isfinite(results[i]) || std::abs(results[i] - expected) > tolerance)
             {
